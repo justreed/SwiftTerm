@@ -137,9 +137,22 @@ extension TerminalView: UITextInput {
         // Block replace during composition input (Chinese/Japanese keyboards)
         // but allow through during dictation so hypothesis updates work correctly
         guard _markedTextRange == nil || _isDictating else { return }
-        uitiLog ("replace(range:\(r), withText:\(text.debugDescription)) \(textInputStateDescription())")
+        uitiLog ("replace(range:\(r), withText:\(text.debugDescription)) isDictating:\(_isDictating) \(textInputStateDescription())")
 
         beginTextInputEdit()
+
+        if _isDictating {
+            // During dictation: only update textInputStorage for iOS bookkeeping.
+            // Do NOT send backspaces or text to the terminal -- that would erase
+            // previously committed content. insertDictationResult() handles
+            // sending the final text to the terminal.
+            textInputStorage.replaceSubrange(r.fullRange(in: textInputStorage), with: text)
+            let insertionEnd = r.startPosition.offset + text.count
+            _selectedTextRange = TextRange(from: TextPosition(offset: insertionEnd),
+                                           to: TextPosition(offset: insertionEnd))
+            endTextInputEdit()
+            return
+        }
 
         // Send the edits to the terminal
         // Delete the old by sending as many backspaces as needed
@@ -163,12 +176,12 @@ extension TerminalView: UITextInput {
             let selectionOffset = _selectedTextRange.startPosition.offset - insertionIndex
             let newSelectionOffset = selectionOffset - r.length + replacementText.count
             let newSelectionIndex = newSelectionOffset + insertionIndex
-            _selectedTextRange = TextRange(from: TextPosition(offset:newSelectionIndex), 
+            _selectedTextRange = TextRange(from: TextPosition(offset:newSelectionIndex),
                                             to: TextPosition(offset: newSelectionIndex + _selectedTextRange.length))
         } else if r.startPosition.offset >= _selectedTextRange.endPosition.offset {
             // NOOP
         } else {
-            let insertionEndPosition = TextPosition(offset:insertionIndex + replacementText.count)            
+            let insertionEndPosition = TextPosition(offset:insertionIndex + replacementText.count)
             _selectedTextRange = TextRange(from: insertionEndPosition,  to: insertionEndPosition)
         }
 
@@ -419,6 +432,8 @@ extension TerminalView: UITextInput {
     
     public var insertDictationResultPlaceholder: Any {
         _isDictating = true
+        _preDictationStorageCount = textInputStorage.count
+        uitiLog("insertDictationResultPlaceholder isDictating=true preDictationCount=\(_preDictationStorageCount) \(textInputStateDescription())")
         return "[DICTATION]"
     }
 
@@ -426,15 +441,31 @@ extension TerminalView: UITextInput {
         uitiLog("removeDictationResultPlaceholder placeholder: \(placeholder), willInsertResult: \(willInsertResult)")
         _isDictating = false
     }
-    
+
     public func insertDictationResult(_ dictationResult: [UIDictationPhrase]) {
         uitiLog("insertDictationResult() phrases: \(dictationResult)")
-        uitiLog("textInputStorage:\"\(String(textInputStorage))\" count:\(textInputStorage.count) marked:\(_markedTextRange?.description ?? "nil") selected:\(_selectedTextRange.description)")
-        
+        uitiLog("textInputStorage:\"\(String(textInputStorage))\" count:\(textInputStorage.count) preDictation:\(_preDictationStorageCount) marked:\(_markedTextRange?.description ?? "nil") selected:\(_selectedTextRange.description)")
+
         // Combine all phrases into a single string
         let combinedText = dictationResult.map { $0.text }.joined()
 
         if combinedText.count > 0 {
+            // Strip any hypothesis text that accumulated in textInputStorage during dictation.
+            // replace() and setMarkedText() updated the storage but did NOT send to terminal,
+            // so we trim back to the pre-dictation state before inserting the final result.
+            beginTextInputEdit()
+            let currentCount = textInputStorage.count
+            if currentCount > _preDictationStorageCount {
+                let trimStart = textInputStorage.index(textInputStorage.startIndex, offsetBy: _preDictationStorageCount)
+                textInputStorage.removeSubrange(trimStart...)
+                uitiLog("insertDictationResult trimmed storage from \(currentCount) to \(textInputStorage.count)")
+            }
+            _markedTextRange = nil
+            let pos = TextPosition(offset: textInputStorage.count)
+            _selectedTextRange = TextRange(from: pos, to: pos)
+            endTextInputEdit()
+
+            // Now insertText sends ONLY the final dictation text to the terminal
             insertText(combinedText)
         }
     }

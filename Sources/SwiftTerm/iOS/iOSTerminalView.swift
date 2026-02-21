@@ -201,6 +201,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // Tracks dictation mode to allow replace() during dictation hypothesis updates
     var _isDictating: Bool = false
 
+    // Tracks the textInputStorage length when dictation began,
+    // so we can strip hypothesis text before sending the final result
+    var _preDictationStorageCount: Int = 0
+
     // Used for the keyboard long-press gesture that works as a cursor
     var lastFloatingCursorLocation: CGPoint?
     
