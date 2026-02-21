@@ -198,6 +198,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     var _markedTextStyle: [NSAttributedString.Key: Any]?
 
+    // Tracks dictation mode to allow replace() during dictation hypothesis updates
+    var _isDictating: Bool = false
+
     // Used for the keyboard long-press gesture that works as a cursor
     var lastFloatingCursorLocation: CGPoint?
     

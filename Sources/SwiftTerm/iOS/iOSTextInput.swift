@@ -134,7 +134,9 @@ extension TerminalView: UITextInput {
     public func replace(_ range: UITextRange, withText text: String) {
         guard let r = range as? TextRange else { return }
 
-        guard _markedTextRange == nil else { return }
+        // Block replace during composition input (Chinese/Japanese keyboards)
+        // but allow through during dictation so hypothesis updates work correctly
+        guard _markedTextRange == nil || _isDictating else { return }
         uitiLog ("replace(range:\(r), withText:\(text.debugDescription)) \(textInputStateDescription())")
 
         beginTextInputEdit()
@@ -268,8 +270,18 @@ extension TerminalView: UITextInput {
     }
     
     public func unmarkText() {
-        uitiLog("unmarkText() \(textInputStateDescription())")
+        uitiLog("unmarkText() isDictating:\(_isDictating) \(textInputStateDescription())")
         if let previouslyMarkedRange = _markedTextRange {
+            // During dictation, insertDictationResult handles sending text to terminal
+            // so we just clear the marked range without re-sending
+            if _isDictating {
+                beginTextInputEdit()
+                let rangeEndPosition = previouslyMarkedRange.endPosition
+                _selectedTextRange = TextRange(from: rangeEndPosition, to: rangeEndPosition)
+                _markedTextRange = nil
+                endTextInputEdit()
+                return
+            }
             // Ensure that multi-char input (Chinese-Japanese keyboards) works:
             if let previouslyMarkedText = text(in: previouslyMarkedRange) {
                 if previouslyMarkedText.count > 0 {
@@ -283,7 +295,7 @@ extension TerminalView: UITextInput {
             _selectedTextRange = TextRange(from: rangeEndPosition, to: rangeEndPosition)
             _markedTextRange = nil
             endTextInputEdit()
-        }        
+        }
     }
     
     public var beginningOfDocument: UITextPosition {
@@ -406,11 +418,13 @@ extension TerminalView: UITextInput {
     // MARK: - Dictation Placeholder Support
     
     public var insertDictationResultPlaceholder: Any {
+        _isDictating = true
         return "[DICTATION]"
     }
-        
+
     public func removeDictationResultPlaceholder(_ placeholder: Any, willInsertResult: Bool) {
         uitiLog("removeDictationResultPlaceholder placeholder: \(placeholder), willInsertResult: \(willInsertResult)")
+        _isDictating = false
     }
     
     public func insertDictationResult(_ dictationResult: [UIDictationPhrase]) {
