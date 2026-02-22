@@ -141,55 +141,24 @@ extension TerminalView: UITextInput {
 
         beginTextInputEdit()
 
-        if _isDictating {
-            // During dictation: only update textInputStorage for iOS bookkeeping.
-            // Do NOT send backspaces or text to the terminal -- that would erase
-            // previously committed content. insertDictationResult() handles
-            // sending the final text to the terminal.
-            textInputStorage.replaceSubrange(r.fullRange(in: textInputStorage), with: text)
-            let insertionEnd = r.startPosition.offset + text.count
-            _selectedTextRange = TextRange(from: TextPosition(offset: insertionEnd),
-                                           to: TextPosition(offset: insertionEnd))
-            endTextInputEdit()
-            return
-        }
-
-        // Send the edits to the terminal using diff-based optimization.
-        // Instead of deleting ALL old text and retyping ALL new text,
-        // find the common prefix and only send changes after it.
-        // This is critical for iOS 26+ dictation which streams hypothesis
-        // updates via replace() with progressively longer text, causing
-        // a catastrophic DEL+retype cycle on every update without this.
-        let oldText = String(textInputStorage[r.fullRange(in: textInputStorage)])
+        // NEVER send to terminal from replace(). Only update internal buffer.
+        //
+        // Why: iOS 26 streams dictation hypothesis updates through replace() with
+        // progressively longer text. Each update can revise earlier words (Siri
+        // autocorrect), requiring DEL+retype cycles that garble terminal output.
+        // Instead, we buffer ALL replace() changes silently and let
+        // insertDictationResult() send the final compiled text in one clean shot.
+        //
+        // Trade-off: iOS keyboard autocorrect (word prediction bar taps, auto-period)
+        // also uses replace() and won't apply to the terminal. This is acceptable
+        // for a terminal UI where autocorrect is usually unwanted.
+        let replacementText = text
         if text != ". " {
             pendingAutoPeriodDeleteWasSpace = false
         }
-        var replacementText = text
-        if let normalized = normalizedAutoPeriodReplacementText(text, oldText: Substring(oldText), rangeToReplace: r) {
-            replacementText = normalized
-        }
+        _dictationStreamedToTerminal = true
 
-        // Calculate common prefix length between old and new text
-        let commonPrefixLen = zip(oldText, replacementText).prefix(while: { $0 == $1 }).count
-        let oldSuffixLen = oldText.count - commonPrefixLen
-        let newSuffix = String(replacementText.dropFirst(commonPrefixLen))
-
-        uitiLog("replace diff: old=\(oldText.count) new=\(replacementText.count) common=\(commonPrefixLen) del=\(oldSuffixLen) send=\(newSuffix.count)")
-
-        // Only delete characters that actually changed
-        for _ in 0..<oldSuffixLen {
-            self.send ([0x7f])
-        }
-        // Only send characters after the common prefix
-        if !newSuffix.isEmpty {
-            self.send (txt: newSuffix)
-        }
-
-        // Mark that replace() has streamed text to terminal.
-        // insertDictationResult() checks this to avoid double-sending.
-        if oldSuffixLen > 0 || !newSuffix.isEmpty {
-            _dictationStreamedToTerminal = true
-        }
+        uitiLog("replace BUFFERED (no terminal send): old=\(r.length) new=\(replacementText.count)")
 
         let insertionIndex = r.startPosition.offset
         textInputStorage.replaceSubrange(r.fullRange(in: textInputStorage), with: replacementText)
@@ -474,20 +443,14 @@ extension TerminalView: UITextInput {
 
         // Combine all phrases into a single string
         let combinedText = dictationResult.map { $0.text }.joined()
+        let wasBuffered = _dictationStreamedToTerminal
+        _dictationStreamedToTerminal = false
 
-        // iOS 26+ streams dictation through replace() with isDictating=false
-        // BEFORE calling this method. If replace() already sent the text to
-        // the terminal, we must NOT send it again (double-send bug).
-        if _dictationStreamedToTerminal {
-            uitiLog("insertDictationResult SKIPPED send — replace() already streamed \(combinedText.count) chars to terminal")
-            _dictationStreamedToTerminal = false
-            resetInputBuffer("insertDictationResult")
-            return
-        }
+        uitiLog("insertDictationResult: combinedText=\(combinedText.count) chars, wasBuffered=\(wasBuffered)")
 
         if combinedText.count > 0 {
             // Strip any hypothesis text that accumulated in textInputStorage during dictation.
-            // replace() and setMarkedText() updated the storage but did NOT send to terminal,
+            // replace() updated the storage but did NOT send to terminal (buffered mode),
             // so we trim back to the pre-dictation state before inserting the final result.
             beginTextInputEdit()
             let currentCount = textInputStorage.count
@@ -501,13 +464,13 @@ extension TerminalView: UITextInput {
             _selectedTextRange = TextRange(from: pos, to: pos)
             endTextInputEdit()
 
-            // Now insertText sends ONLY the final dictation text to the terminal
+            // Send the final compiled dictation text to the terminal in one shot.
+            // replace() was suppressed during dictation (no streaming, no DELs),
+            // so this is the ONLY send for the entire dictation.
+            uitiLog("insertDictationResult SENDING \(combinedText.count) chars to terminal")
             insertText(combinedText)
 
             // Reset buffer after dictation to prevent stale accumulation.
-            // The text has been sent to the terminal; keeping it in the buffer
-            // would cause problems if the user starts another dictation or
-            // if iOS calls replace() for autocorrect on the stale content.
             resetInputBuffer("insertDictationResult")
         }
     }
