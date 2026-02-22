@@ -154,21 +154,36 @@ extension TerminalView: UITextInput {
             return
         }
 
-        // Send the edits to the terminal
-        // Delete the old by sending as many backspaces as needed
-        let oldText = textInputStorage[r.fullRange(in: textInputStorage)]
+        // Send the edits to the terminal using diff-based optimization.
+        // Instead of deleting ALL old text and retyping ALL new text,
+        // find the common prefix and only send changes after it.
+        // This is critical for iOS 26+ dictation which streams hypothesis
+        // updates via replace() with progressively longer text, causing
+        // a catastrophic DEL+retype cycle on every update without this.
+        let oldText = String(textInputStorage[r.fullRange(in: textInputStorage)])
         if text != ". " {
             pendingAutoPeriodDeleteWasSpace = false
         }
         var replacementText = text
-        if let normalized = normalizedAutoPeriodReplacementText(text, oldText: oldText, rangeToReplace: r) {
+        if let normalized = normalizedAutoPeriodReplacementText(text, oldText: Substring(oldText), rangeToReplace: r) {
             replacementText = normalized
         }
-        let backspaces = oldText.count
-        for _ in 0..<backspaces {
+
+        // Calculate common prefix length between old and new text
+        let commonPrefixLen = zip(oldText, replacementText).prefix(while: { $0 == $1 }).count
+        let oldSuffixLen = oldText.count - commonPrefixLen
+        let newSuffix = String(replacementText.dropFirst(commonPrefixLen))
+
+        uitiLog("replace diff: old=\(oldText.count) new=\(replacementText.count) common=\(commonPrefixLen) del=\(oldSuffixLen) send=\(newSuffix.count)")
+
+        // Only delete characters that actually changed
+        for _ in 0..<oldSuffixLen {
             self.send ([0x7f])
         }
-        self.send (txt: replacementText)
+        // Only send characters after the common prefix
+        if !newSuffix.isEmpty {
+            self.send (txt: newSuffix)
+        }
 
         let insertionIndex = r.startPosition.offset
         textInputStorage.replaceSubrange(r.fullRange(in: textInputStorage), with: replacementText)
