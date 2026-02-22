@@ -50,6 +50,7 @@ public extension Notification.Name {
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate {
     public static var textInputDebugEnabled: Bool = false
+    public static var logHandler: ((String) -> Void)?
     internal static var textInputLogCounter: Int = 0
 
     struct FontSet {
@@ -1301,11 +1302,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             metaModifier = false
         } else {
             if textToInsert == "\n" {
-                resetInputBuffer()
                 self.send(data: returnByteSequence [0...])
             } else {
                 self.send(txt: textToInsert)
             }
+            // Reset buffer after ALL committed text, not just newlines.
+            // Terminals are character-at-a-time: once text is sent, the buffer
+            // must not retain stale content. Without this, textInputStorage
+            // accumulates indefinitely, causing dictation to backspace over
+            // previously committed text when iOS queries the stale buffer.
+            resetInputBuffer()
         }
 
         queuePendingDisplay()
@@ -1319,7 +1325,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         Soft keyboard input. Hardware keyboard text input is delivered here; special keys are handled in pressesBegan.
     */
     open func insertText(_ text: String) {
-        //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
+        uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
         commitTextInput(text, applyModifiers: true)
     }
     // this is necessary because something in the iOS IME seems to prevent
