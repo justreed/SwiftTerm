@@ -206,6 +206,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // so we can strip hypothesis text before sending the final result
     var _preDictationStorageCount: Int = 0
 
+    // Tracks whether replace() has streamed text to terminal during the current
+    // dictation session. iOS 26 streams dictation via replace() with isDictating=false
+    // BEFORE calling insertDictationResult. If replace() already sent the text,
+    // insertDictationResult must NOT send it again (double-send bug).
+    var _dictationStreamedToTerminal: Bool = false
+
     // Used for the keyboard long-press gesture that works as a cursor
     var lastFloatingCursorLocation: CGPoint?
     

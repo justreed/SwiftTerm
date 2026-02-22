@@ -185,6 +185,12 @@ extension TerminalView: UITextInput {
             self.send (txt: newSuffix)
         }
 
+        // Mark that replace() has streamed text to terminal.
+        // insertDictationResult() checks this to avoid double-sending.
+        if oldSuffixLen > 0 || !newSuffix.isEmpty {
+            _dictationStreamedToTerminal = true
+        }
+
         let insertionIndex = r.startPosition.offset
         textInputStorage.replaceSubrange(r.fullRange(in: textInputStorage), with: replacementText)
         if r.endPosition.offset <= _selectedTextRange.startPosition.offset {
@@ -468,6 +474,16 @@ extension TerminalView: UITextInput {
 
         // Combine all phrases into a single string
         let combinedText = dictationResult.map { $0.text }.joined()
+
+        // iOS 26+ streams dictation through replace() with isDictating=false
+        // BEFORE calling this method. If replace() already sent the text to
+        // the terminal, we must NOT send it again (double-send bug).
+        if _dictationStreamedToTerminal {
+            uitiLog("insertDictationResult SKIPPED send — replace() already streamed \(combinedText.count) chars to terminal")
+            _dictationStreamedToTerminal = false
+            resetInputBuffer("insertDictationResult")
+            return
+        }
 
         if combinedText.count > 0 {
             // Strip any hypothesis text that accumulated in textInputStorage during dictation.
