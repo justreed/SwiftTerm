@@ -431,8 +431,13 @@ extension TerminalView: UITextInput {
     // MARK: - Dictation Placeholder Support
     
     public var insertDictationResultPlaceholder: Any {
+        // Clear stale text from previous typing/dictation sessions before
+        // capturing the pre-dictation buffer size. Without this, the buffer
+        // accumulates indefinitely across input sessions, and replace() or
+        // other iOS callbacks can send backspaces for the stale content.
+        resetInputBuffer("insertDictationResultPlaceholder")
         _isDictating = true
-        _preDictationStorageCount = textInputStorage.count
+        _preDictationStorageCount = textInputStorage.count  // Now 0
         uitiLog("insertDictationResultPlaceholder isDictating=true preDictationCount=\(_preDictationStorageCount) \(textInputStateDescription())")
         return "[DICTATION]"
     }
@@ -467,6 +472,12 @@ extension TerminalView: UITextInput {
 
             // Now insertText sends ONLY the final dictation text to the terminal
             insertText(combinedText)
+
+            // Reset buffer after dictation to prevent stale accumulation.
+            // The text has been sent to the terminal; keeping it in the buffer
+            // would cause problems if the user starts another dictation or
+            // if iOS calls replace() for autocorrect on the stale content.
+            resetInputBuffer("insertDictationResult")
         }
     }
     

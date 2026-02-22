@@ -1267,6 +1267,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func commitTextInput(_ text: String, applyModifiers: Bool) {
+        uitiLog("commitTextInput(\(text.debugDescription), applyModifiers:\(applyModifiers)) isDictating:\(_isDictating) bufLen:\(textInputStorage.count) \(textInputStateDescription())")
         let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
         if text != ". " {
             pendingAutoPeriodDeleteWasSpace = false
@@ -1302,16 +1303,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             metaModifier = false
         } else {
             if textToInsert == "\n" {
+                resetInputBuffer()
                 self.send(data: returnByteSequence [0...])
             } else {
                 self.send(txt: textToInsert)
             }
-            // Reset buffer after ALL committed text, not just newlines.
-            // Terminals are character-at-a-time: once text is sent, the buffer
-            // must not retain stale content. Without this, textInputStorage
-            // accumulates indefinitely, causing dictation to backspace over
-            // previously committed text when iOS queries the stale buffer.
-            resetInputBuffer()
         }
 
         queuePendingDisplay()
