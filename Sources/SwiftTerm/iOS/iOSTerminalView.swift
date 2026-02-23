@@ -212,6 +212,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // insertDictationResult must NOT send it again (double-send bug).
     var _dictationStreamedToTerminal: Bool = false
 
+    // Tracks how many bytes leaked to terminal via insertText() before replace()
+    // started buffering. iOS sends ~4 initial chars via insertText() at dictation
+    // start before switching to replace(). These bytes need to be erased with DEL
+    // characters before the final dictation text is sent.
+    var _dictationLeakedBytes: Int = 0
+
     // Used for the keyboard long-press gesture that works as a cursor
     var lastFloatingCursorLocation: CGPoint?
     
@@ -1298,6 +1304,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         _selectedTextRange = TextRange(from: insertedPosition, to: insertedPosition)
 
         endTextInputEdit()
+
+        // During active dictation buffering, suppress sending to terminal.
+        // iOS sends a space via insertText right before insertDictationResult;
+        // that space would leak to terminal. insertDictationResult handles
+        // erasing any initial leak and sending the final clean text.
+        if _dictationStreamedToTerminal {
+            uitiLog("commitTextInput SUPPRESSED during dictation buffering: \(textToInsert.debugDescription)")
+            queuePendingDisplay()
+            return
+        }
 
         if applyModifiers && (terminalAccessory?.controlModifier ?? controlModifier ?? false) {
             self.send(applyControlToEventCharacters(textToInsert))

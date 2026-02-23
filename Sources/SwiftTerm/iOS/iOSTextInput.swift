@@ -156,7 +156,15 @@ extension TerminalView: UITextInput {
         if text != ". " {
             pendingAutoPeriodDeleteWasSpace = false
         }
-        _dictationStreamedToTerminal = true
+        if !_dictationStreamedToTerminal {
+            _dictationStreamedToTerminal = true
+            // Track bytes that were already sent to terminal via insertText()
+            // before replace() started buffering. iOS sends ~4 initial chars
+            // via insertText() at dictation start. insertDictationResult will
+            // send DEL chars to erase these leaked characters.
+            _dictationLeakedBytes = textInputStorage.utf8.count
+            uitiLog("replace: dictation buffering STARTED, initial leak=\(_dictationLeakedBytes) bytes from insertText")
+        }
 
         uitiLog("replace BUFFERED (no terminal send): old=\(r.length) new=\(replacementText.count)")
 
@@ -463,6 +471,16 @@ extension TerminalView: UITextInput {
             let pos = TextPosition(offset: textInputStorage.count)
             _selectedTextRange = TextRange(from: pos, to: pos)
             endTextInputEdit()
+
+            // Erase any characters that leaked to terminal via insertText() before
+            // replace() started buffering. iOS sends ~4 initial chars via insertText()
+            // at dictation start before switching to replace() for streaming.
+            if _dictationLeakedBytes > 0 {
+                let delBytes = [UInt8](repeating: 0x7f, count: _dictationLeakedBytes)
+                send(delBytes)
+                uitiLog("insertDictationResult: sent \(_dictationLeakedBytes) DEL chars to erase initial leak")
+                _dictationLeakedBytes = 0
+            }
 
             // Send the final compiled dictation text to the terminal in one shot.
             // replace() was suppressed during dictation (no streaming, no DELs),
